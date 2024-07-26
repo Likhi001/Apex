@@ -22,6 +22,9 @@ from sensor_msgs.msg import CompressedImage
 import numpy as np
 import cv2
 import math
+'''-----------------------'''
+from rclpy.parameter import Parameter
+'''-----------------------'''
 
 # synapse_msgs is a package defined at ~/cognipilot/cranium/src/.
   # It provides support for ROS2 messages to be used with CogniPilot.
@@ -37,8 +40,8 @@ RED_COLOR = (0, 0, 255)
 BLUE_COLOR = (255, 0, 0)
 GREEN_COLOR = (0, 255, 0)
 
-VECTOR_IMAGE_HEIGHT_PERCENTAGE = 0.40  # Bottom portion of image to be analyzed for vectors.
-VECTOR_MAGNITUDE_MINIMUM = 2.5
+#VECTOR_IMAGE_HEIGHT_PERCENTAGE = 0.40  # Bottom portion of image to be analyzed for vectors.
+#VECTOR_MAGNITUDE_MINIMUM = 2.5
 
 
 class EdgeVectorsPublisher(Node):
@@ -74,6 +77,16 @@ class EdgeVectorsPublisher(Node):
 			CompressedImage,
 			"/debug_images/vector_image",
 			QOS_PROFILE_DEFAULT)
+		'''----------------'''
+		self.declare_parameters(
+    		namespace='',
+    		parameters=[
+        		('threshold_black', 25),
+        		('vector_magnitude_minimum', 2.5),
+        		('vector_image_height_percentage', 0.40)
+    			]
+		)		
+		'''----------------'''
 
 		self.image_height = 0
 		self.image_width = 0
@@ -149,7 +162,7 @@ class EdgeVectorsPublisher(Node):
 			max_y_coord = max_y_coords[0]
 
 			magnitude = np.linalg.norm(min_y_coord - max_y_coord)
-			if (magnitude > VECTOR_MAGNITUDE_MINIMUM):
+			if (magnitude > self.vector_magnitude_minimum):
 				# Calculate distance from the rover to the middle point of vector.
 				rover_point = [self.image_width / 2, self.lower_image_height]
 				middle_point = (min_y_coord + max_y_coord) / 2
@@ -186,13 +199,15 @@ class EdgeVectorsPublisher(Node):
 	"""
 	def process_image_for_edge_vectors(self, image):
 		self.image_height, self.image_width, color_count = image.shape
-		self.lower_image_height = int(self.image_height * VECTOR_IMAGE_HEIGHT_PERCENTAGE)
+		self.lower_image_height = int(self.image_height * self.vector_image_height_percentage)
 		self.upper_image_height = int(self.image_height - self.lower_image_height)
-
+		self.threshold_black = self.get_parameter('threshold_black').value
+		self.vector_magnitude_minimum = self.get_parameter('vector_magnitude_minimum').value
+		self.vector_image_height_percentage = self.get_parameter('vector_image_height_percentage').value
 		gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Convert to grayscale image.
 		# Separate black (color of edges) pixels from the rest by applying threshold.
-		threshold_black = 25
-		thresh = cv2.threshold(gray, threshold_black, 255, cv2.THRESH_BINARY_INV)[1]
+		#threshold_black = 25
+		thresh = cv2.threshold(gray, self.threshold_black, 255, cv2.THRESH_BINARY_INV)[1]
 
 		thresh = thresh[self.image_height - self.lower_image_height:]
 		image = image[self.image_height - self.lower_image_height:]
