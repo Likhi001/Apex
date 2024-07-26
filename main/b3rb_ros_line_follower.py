@@ -22,6 +22,7 @@ THRESHOLD_OBSTACLE_HORIZONTAL = 0.25
 TURN_SCALING_FACTOR = 0.5  # Scale down the turn value to make the turn more gradual
 OBSTACLE_SAFE_DISTANCE = 2.0  # Safe distance from obstacle in meters
 RAMP_COOLDOWN_TIME = 5.0  # Time in seconds to slow down after climbing a ramp
+RAMP_ANGLE_THRESHOLD = 15  # Threshold angle to consider the presence of a ramp
 
 class LineFollower(Node):
     def __init__(self):
@@ -150,11 +151,17 @@ class LineFollower(Node):
         side_ranges_left = ranges[int(length * (PI - theta) / PI):]
 
         angle = theta - PI / 2
+        ramp_angles = []
         for i in range(len(front_ranges)):
             if front_ranges[i] < THRESHOLD_OBSTACLE_VERTICAL:
                 self.obstacle_detected = True
                 return
             angle += message.angle_increment
+            if front_ranges[i] > 0 and angle < 0.1:
+                ramp_angles.append(angle)
+
+        if len(ramp_angles) > 0 and max(ramp_angles) > RAMP_ANGLE_THRESHOLD:
+            self.ramp_detected = True
 
         side_ranges_left.reverse()
         for side_ranges in [side_ranges_left, side_ranges_right]:
