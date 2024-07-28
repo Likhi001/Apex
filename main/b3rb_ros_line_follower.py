@@ -1,9 +1,10 @@
+# b3rb_ros_line_follower.py
+
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Joy
+from sensor_msgs.msg import Joy, LaserScan
 import math
 from synapse_msgs.msg import EdgeVectors, TrafficStatus
-from sensor_msgs.msg import LaserScan
 from rclpy.duration import Duration
 
 QOS_PROFILE_DEFAULT = 10
@@ -19,47 +20,30 @@ SPEED_50_PERCENT = SPEED_25_PERCENT * 2
 SPEED_75_PERCENT = SPEED_25_PERCENT * 3
 THRESHOLD_OBSTACLE_VERTICAL = 1.0
 THRESHOLD_OBSTACLE_HORIZONTAL = 0.25
-TURN_SCALING_FACTOR = 0.5  # Scale down the turn value to make the turn more gradual
-OBSTACLE_SAFE_DISTANCE = 2.0  # Safe distance from obstacle in meters
-RAMP_COOLDOWN_TIME = 5.0  # Time in seconds to slow down after climbing a ramp
-RAMP_ANGLE_THRESHOLD = 15  # Threshold angle to consider the presence of a ramp
+TURN_SCALING_FACTOR = 0.25
+OBSTACLE_SAFE_DISTANCE = 2.0
+RAMP_COOLDOWN_TIME = 5.0
+RAMP_SLOPE_THRESHOLD = 0.1
+RAMP_DETECTION_COUNT = 5
+SHARP_TURN_THRESHOLD = 0.5  # Threshold for detecting sharp turns
 
 class LineFollower(Node):
     def __init__(self):
         super().__init__('line_follower')
-
-        # Subscription for edge vectors.
         self.subscription_vectors = self.create_subscription(
-            EdgeVectors,
-            '/edge_vectors',
-            self.edge_vectors_callback,
-            QOS_PROFILE_DEFAULT)
-
-        # Publisher for joy (for moving the rover in manual mode).
+            EdgeVectors, '/edge_vectors', self.edge_vectors_callback, QOS_PROFILE_DEFAULT)
         self.publisher_joy = self.create_publisher(
-            Joy,
-            '/cerebri/in/joy',
-            QOS_PROFILE_DEFAULT)
-
-        # Subscription for traffic status.
+            Joy, '/cerebri/in/joy', QOS_PROFILE_DEFAULT)
         self.subscription_traffic = self.create_subscription(
-            TrafficStatus,
-            '/traffic_status',
-            self.traffic_status_callback,
-            QOS_PROFILE_DEFAULT)
-
-        # Subscription for LIDAR data.
+            TrafficStatus, '/traffic_status', self.traffic_status_callback, QOS_PROFILE_DEFAULT)
         self.subscription_lidar = self.create_subscription(
-            LaserScan,
-            '/scan',
-            self.lidar_callback,
-            QOS_PROFILE_DEFAULT)
-
+            LaserScan, '/scan', self.lidar_callback, QOS_PROFILE_DEFAULT)
         self.traffic_status = TrafficStatus()
         self.obstacle_detected = False
         self.ramp_detected = False
         self.closest_obstacle_distance = float('inf')
         self.ramp_climbed_time = None
+        self.on_ramp = False
 
     def rover_move_manual_mode(self, speed, turn):
         msg = Joy()
@@ -67,67 +51,64 @@ class LineFollower(Node):
         msg.axes = [0.0, speed, 0.0, turn]
         self.publisher_joy.publish(msg)
 
-    def calculate_speed_and_turn(self, distance):
-        if distance > OBSTACLE_SAFE_DISTANCE:
-            speed = SPEED_MAX
-            turn = TURN_MIN
+    def calculate_speed_and_turn(self, deviation, width, sharp_turn):
+        if sharp_turn:
+            speed = SPEED_50_PERCENT
+            turn = (deviation / width) * TURN_SCALING_FACTOR * 2  # Increase turn for sharp turns
         else:
-            speed = max(SPEED_MIN, SPEED_MAX * (distance / OBSTACLE_SAFE_DISTANCE))
-            turn = max(TURN_MIN, TURN_MAX * (1 - (distance / OBSTACLE_SAFE_DISTANCE)))
+            speed = SPEED_MAX
+            turn = (deviation / width) * TURN_SCALING_FACTOR
         return speed, turn
 
     def edge_vectors_callback(self, message):
         speed = SPEED_MAX
         turn = TURN_MIN
-
         vectors = message
         half_width = vectors.image_width / 2
+        sharp_turn = False
+        flag = 0
 
         if vectors.vector_count == 0:
             pass
-
         elif vectors.vector_count == 1:
             deviation = vectors.vector_1[1].x - vectors.vector_1[0].x
-            turn = (deviation / vectors.image_width) * TURN_SCALING_FACTOR
-            # Adjust speed for sharper turns
-            if abs(turn) > 0.5:
-                speed = SPEED_50_PERCENT
-
+            sharp_turn = abs(deviation) > SHARP_TURN_THRESHOLD * vectors.image_width
+            speed, turn = self.calculate_speed_and_turn(deviation, vectors.image_width, sharp_turn)
         elif vectors.vector_count == 2:
             middle_x_left = (vectors.vector_1[0].x + vectors.vector_1[1].x) / 2
             middle_x_right = (vectors.vector_2[0].x + vectors.vector_2[1].x) / 2
             middle_x = (middle_x_left + middle_x_right) / 2
             deviation = half_width - middle_x
-            turn = (deviation / half_width) * TURN_SCALING_FACTOR
-            # Adjust speed for sharper turns
-            if abs(turn) > 0.5:
-                speed = SPEED_50_PERCENT
+            sharp_turn = abs(deviation) > SHARP_TURN_THRESHOLD * half_width
+            speed, turn = self.calculate_speed_and_turn(deviation, half_width, sharp_turn)
+
+        if self.traffic_status.stop_sign:
+            speed = SPEED_MIN
+            print("stop sign detected")
+
+        if self.on_ramp:
+            speed = SPEED_25_PERCENT
+            print("Slowing down after climbing ramp")
+            if self.get_clock().now() - self.ramp_climbed_time > Duration(seconds=RAMP_COOLDOWN_TIME):
+                self.on_ramp = False
 
         if self.ramp_detected:
             speed = SPEED_25_PERCENT
             self.ramp_climbed_time = self.get_clock().now()
             self.ramp_detected = False
-            print("Ramp/bridge detected")
+            self.on_ramp = True
+            print("ramp/bridge detected")
+            flag = 1
 
-        if self.ramp_climbed_time is not None:
-            if self.get_clock().now() - self.ramp_climbed_time < Duration(seconds=RAMP_COOLDOWN_TIME):
-                speed = SPEED_50_PERCENT
-                print("Slowing down after climbing ramp")
-
-        if self.obstacle_detected:
-            speed = SPEED_25_PERCENT
-            if vectors.vector_count == 0:
-                turn = TURN_MIN
-                pass
-            elif vectors.vector_count == 1:
-                if vectors.vector_1[1].x < half_width:
-                    turn = LEFT_TURN * TURN_SCALING_FACTOR
+        if flag == 0:
+            if self.obstacle_detected:
+                speed = SPEED_25_PERCENT
+                distance = self.closest_obstacle_distance
+                if distance < THRESHOLD_OBSTACLE_VERTICAL:
+                    turn = RIGHT_TURN * (1 - distance / THRESHOLD_OBSTACLE_VERTICAL)
                 else:
-                    turn = RIGHT_TURN * TURN_SCALING_FACTOR
-            else:
-                speed = SPEED_MAX
-                turn = TURN_MIN
-            print("Obstacle detected")
+                    turn = LEFT_TURN * (distance / THRESHOLD_OBSTACLE_VERTICAL)
+                print("obstacle detected")
 
         self.rover_move_manual_mode(speed, turn)
 
@@ -137,12 +118,27 @@ class LineFollower(Node):
     def lidar_callback(self, message):
         self.ramp_detected = False
         self.obstacle_detected = False
+        self.closest_obstacle_distance = float('inf')
+
+        ranges = message.ranges
+        length = len(ranges)
+        ramp_slope_count = 0
+
+        for i in range(length - 1):
+            if ranges[i] < float('inf') and ranges[i + 1] < float('inf'):
+                slope = (ranges[i + 1] - ranges[i]) / message.angle_increment
+                if slope > RAMP_SLOPE_THRESHOLD:
+                    ramp_slope_count += 1
+                    if ramp_slope_count >= RAMP_DETECTION_COUNT:
+                        self.ramp_detected = True
+                        break
+                else:
+                    ramp_slope_count = 0
 
         shield_vertical = 4
         shield_horizontal = 1
         theta = math.atan(shield_vertical / shield_horizontal)
 
-        length = float(len(message.ranges))
         ranges = message.ranges[int(length / 4): int(3 * length / 4)]
 
         length = float(len(ranges))
@@ -151,17 +147,12 @@ class LineFollower(Node):
         side_ranges_left = ranges[int(length * (PI - theta) / PI):]
 
         angle = theta - PI / 2
-        ramp_angles = []
         for i in range(len(front_ranges)):
             if front_ranges[i] < THRESHOLD_OBSTACLE_VERTICAL:
                 self.obstacle_detected = True
+                self.closest_obstacle_distance = min(self.closest_obstacle_distance, front_ranges[i])
                 return
             angle += message.angle_increment
-            if front_ranges[i] > 0 and angle < 0.1:
-                ramp_angles.append(angle)
-
-        if len(ramp_angles) > 0 and max(ramp_angles) > RAMP_ANGLE_THRESHOLD:
-            self.ramp_detected = True
 
         side_ranges_left.reverse()
         for side_ranges in [side_ranges_left, side_ranges_right]:
@@ -169,6 +160,7 @@ class LineFollower(Node):
             for i in range(len(side_ranges)):
                 if side_ranges[i] < THRESHOLD_OBSTACLE_HORIZONTAL:
                     self.obstacle_detected = True
+                    self.closest_obstacle_distance = min(self.closest_obstacle_distance, side_ranges[i])
                     return
                 angle += message.angle_increment
 
