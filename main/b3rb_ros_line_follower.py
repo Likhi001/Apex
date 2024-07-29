@@ -16,16 +16,20 @@ TURN_MAX = 1.0
 SPEED_MIN = 0.0
 SPEED_MAX = 1.0
 SPEED_25_PERCENT = SPEED_MAX / 4
+SPEED_40_PERCENT = SPEED_MAX * 0.4
+SPEED_45_PERCENT = SPEED_MAX * 0.45
+SPEED_30_PERCENT = SPEED_MAX * 0.3
 SPEED_50_PERCENT = SPEED_25_PERCENT * 2
+SPEED_65_PERCENT = SPEED_MAX*0.65
 SPEED_75_PERCENT = SPEED_25_PERCENT * 3
 THRESHOLD_OBSTACLE_VERTICAL = 1.0
 THRESHOLD_OBSTACLE_HORIZONTAL = 0.25
-TURN_SCALING_FACTOR = 0.25
+TURN_SCALING_FACTOR = 0.6
 OBSTACLE_SAFE_DISTANCE = 2.0
 RAMP_COOLDOWN_TIME = 5.0
 RAMP_SLOPE_THRESHOLD = 0.1
 RAMP_DETECTION_COUNT = 5
-SHARP_TURN_THRESHOLD = 0.5  # Threshold for detecting sharp turns
+SHARP_TURN_THRESHOLD = 0.5
 
 class LineFollower(Node):
     def __init__(self):
@@ -54,9 +58,9 @@ class LineFollower(Node):
     def calculate_speed_and_turn(self, deviation, width, sharp_turn):
         if sharp_turn:
             speed = SPEED_50_PERCENT
-            turn = (deviation / width) * TURN_SCALING_FACTOR * 2  # Increase turn for sharp turns
+            turn = (deviation / width) * TURN_SCALING_FACTOR * 2
         else:
-            speed = SPEED_MAX
+            speed = SPEED_65_PERCENT
             turn = (deviation / width) * TURN_SCALING_FACTOR
         return speed, turn
 
@@ -84,7 +88,7 @@ class LineFollower(Node):
 
         if self.traffic_status.stop_sign:
             speed = SPEED_MIN
-            print("stop sign detected")
+            print("Stop sign detected")
 
         if self.on_ramp:
             speed = SPEED_25_PERCENT
@@ -93,22 +97,22 @@ class LineFollower(Node):
                 self.on_ramp = False
 
         if self.ramp_detected:
-            speed = SPEED_25_PERCENT
+            speed = SPEED_45_PERCENT
             self.ramp_climbed_time = self.get_clock().now()
             self.ramp_detected = False
             self.on_ramp = True
-            print("ramp/bridge detected")
+            print("Ramp/bridge detected")
             flag = 1
 
         if flag == 0:
             if self.obstacle_detected:
-                speed = SPEED_25_PERCENT
+                speed = SPEED_45_PERCENT
                 distance = self.closest_obstacle_distance
                 if distance < THRESHOLD_OBSTACLE_VERTICAL:
-                    turn = RIGHT_TURN * (1 - distance / THRESHOLD_OBSTACLE_VERTICAL)
+                    turn = RIGHT_TURN * (1 - distance / THRESHOLD_OBSTACLE_VERTICAL)*TURN_SCALING_FACTOR
                 else:
-                    turn = LEFT_TURN * (distance / THRESHOLD_OBSTACLE_VERTICAL)
-                print("obstacle detected")
+                    turn = LEFT_TURN * (distance / THRESHOLD_OBSTACLE_VERTICAL)*TURN_SCALING_FACTOR
+                print("Obstacle detected")
 
         self.rover_move_manual_mode(speed, turn)
 
@@ -125,8 +129,8 @@ class LineFollower(Node):
         ramp_slope_count = 0
 
         for i in range(length - 1):
-            if ranges[i] < float('inf') and ranges[i + 1] < float('inf'):
-                slope = (ranges[i + 1] - ranges[i]) / message.angle_increment
+            if ranges[i] < float('inf') and ranges[i+1] < float('inf'):
+                slope = (ranges[i+1] - ranges[i]) / message.angle_increment
                 if slope > RAMP_SLOPE_THRESHOLD:
                     ramp_slope_count += 1
                     if ramp_slope_count >= RAMP_DETECTION_COUNT:
