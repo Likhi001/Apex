@@ -6,7 +6,7 @@ import numpy as np
 from sensor_msgs.msg import CompressedImage
 
 QOS_PROFILE_DEFAULT = 10
-#no used imports 
+#no Unused imports 
 class ObjectRecognizer(Node):
     def __init__(self):
         super().__init__('object_recognizer')
