@@ -1,4 +1,3 @@
-# Import required libraries
 import rclpy
 from rclpy.node import Node
 from synapse_msgs.msg import TrafficStatus
@@ -6,89 +5,72 @@ import cv2
 import numpy as np
 from sensor_msgs.msg import CompressedImage
 
-# Define constants
 QOS_PROFILE_DEFAULT = 10
 
 class ObjectRecognizer(Node):
+    """
+    ROS2 Node for recognizing objects (traffic signs) from camera images
+    and publishing traffic status.
+
+    Subscriptions:
+    - /camera/image_raw/compressed: Receives compressed images from the camera.
+
+    Publications:
+    - /traffic_status: Publishes detected traffic status information.
+    """
+
     def __init__(self):
-        """
-        Initialize the ObjectRecognizer node.
-        Sets up subscriptions and publishers.
-        """
         super().__init__('object_recognizer')
-        
+
         try:
-            # Subscribe to the compressed camera image topic
+            # Subscription for camera images
             self.subscription_camera = self.create_subscription(
                 CompressedImage,
                 '/camera/image_raw/compressed',
                 self.camera_image_callback,
-                QOS_PROFILE_DEFAULT
-            )
-            
-            # Create a publisher for traffic status
+                QOS_PROFILE_DEFAULT)
+
+            # Publisher for traffic status
             self.publisher_traffic = self.create_publisher(
                 TrafficStatus,
                 '/traffic_status',
-                QOS_PROFILE_DEFAULT
-            )
-            
-            self.get_logger().info('ObjectRecognizer node initialized successfully')
+                QOS_PROFILE_DEFAULT)
+
         except Exception as e:
-            self.get_logger().error(f'Failed to initialize node: {str(e)}')
+            self.get_logger().error(f'Failed to initialize subscriptions or publishers: {str(e)}')
 
     def camera_image_callback(self, message):
         """
-        Callback function for processing incoming camera images.
-        Decodes the compressed image and performs object recognition.
-        
+        Callback function to process received camera images for traffic sign detection.
+
         Args:
-            message (CompressedImage): The incoming compressed image message
+            message: CompressedImage message containing the raw image data.
         """
         try:
-            # Convert compressed image to numpy array
+            # Convert message to an image
             np_arr = np.frombuffer(message.data, np.uint8)
-            
-            # Decode the image
             image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            
-            # Create a TrafficStatus message
             traffic_status_message = TrafficStatus()
-            
-            # TODO: Add logic for recognizing traffic signs here
-            # For example:
-            # traffic_status_message.stop_sign = self.detect_stop_sign(image)
-            # traffic_status_message.traffic_light = self.detect_traffic_light(image)
-            
-            # Publish the traffic status
-            self.publisher_traffic.publish(traffic_status_message)
-            
-        except Exception as e:
-            self.get_logger().error(f'Error processing camera image: {str(e)}')
 
-    # TODO: Implement these methods
-    # def detect_stop_sign(self, image):
-    #     # Add logic to detect stop signs
-    #     pass
-    
-    # def detect_traffic_light(self, image):
-    #     # Add logic to detect and classify traffic lights
-    #     pass
+            # NOTE: Add logic for recognizing traffic signs here
+
+            # Publish traffic status based on detected signs
+            self.publisher_traffic.publish(traffic_status_message)
+
+        except Exception as e:
+            self.get_logger().error(f'Failed to process camera image or publish traffic status: {str(e)}')
 
 def main(args=None):
-    """
-    Main function to initialize and run the ObjectRecognizer node.
-    """
     rclpy.init(args=args)
-    
+
     try:
+        # Initialize and run the ObjectRecognizer node
         object_recognizer = ObjectRecognizer()
         rclpy.spin(object_recognizer)
     except Exception as e:
         rclpy.logging.get_logger('ObjectRecognizer').error(f'Unexpected error: {str(e)}')
     finally:
-        if 'object_recognizer' in locals():
-            object_recognizer.destroy_node()
+        object_recognizer.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
